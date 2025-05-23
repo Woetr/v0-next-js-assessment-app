@@ -158,6 +158,16 @@ export default function AssessmentPage() {
   }
 
   const handleSubmit = async () => {
+    console.log("=== FRONTEND SUBMISSION START ===")
+    console.log("Submission data:", {
+      name,
+      email,
+      answersCount: Object.keys(answers).length,
+      timeTakenCount: Object.keys(timeTaken).length,
+      deviceFingerprintLength: deviceFingerprint.length,
+      isPreview,
+    })
+
     setIsSubmitting(true)
     setError(null)
 
@@ -181,9 +191,14 @@ export default function AssessmentPage() {
         return
       }
 
+      console.log("Making API call to submit assessment...")
+
       // Voeg een timeout toe aan de fetch
       const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), 30000) // 30 seconden timeout
+      const timeoutId = setTimeout(() => {
+        console.log("Request timeout triggered")
+        controller.abort()
+      }, 60000) // 60 seconden timeout
 
       const response = await fetch("/api/submit-assessment", {
         method: "POST",
@@ -202,7 +217,14 @@ export default function AssessmentPage() {
 
       clearTimeout(timeoutId)
 
+      console.log("API response received:", {
+        status: response.status,
+        statusText: response.statusText,
+        ok: response.ok,
+      })
+
       const data = await response.json()
+      console.log("API response data:", data)
 
       if (response.ok) {
         // Als er een waarschuwing is, toon deze maar ga toch door
@@ -212,6 +234,7 @@ export default function AssessmentPage() {
           // setError(data.warning)
         }
 
+        console.log("Assessment submission successful, redirecting to thank you page")
         // Ga naar de bedankt-pagina, zelfs als er een waarschuwing is
         router.push("/assessment/bedankt")
       } else {
@@ -224,6 +247,7 @@ export default function AssessmentPage() {
       // Controleer op specifieke fouten
       if (error instanceof Error) {
         if (error.name === "AbortError") {
+          console.log("Request was aborted due to timeout")
           setError(
             "Het versturen van de assessment duurde te lang. We hebben je antwoorden opgeslagen en zullen contact met je opnemen.",
           )
@@ -262,6 +286,7 @@ export default function AssessmentPage() {
       setError(errorMessage)
     } finally {
       setIsSubmitting(false)
+      console.log("=== FRONTEND SUBMISSION END ===")
     }
   }
 
