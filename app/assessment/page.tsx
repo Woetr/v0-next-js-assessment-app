@@ -181,6 +181,10 @@ export default function AssessmentPage() {
         return
       }
 
+      // Voeg een timeout toe aan de fetch
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 30000) // 30 seconden timeout
+
       const response = await fetch("/api/submit-assessment", {
         method: "POST",
         headers: {
@@ -193,12 +197,22 @@ export default function AssessmentPage() {
           timeTaken,
           deviceFingerprint,
         }),
+        signal: controller.signal,
       })
+
+      clearTimeout(timeoutId)
 
       const data = await response.json()
 
       if (response.ok) {
-        // Zelfs als de e-mail niet is verzonden, sturen we de gebruiker door naar de bedankt-pagina
+        // Als er een waarschuwing is, toon deze maar ga toch door
+        if (data.warning) {
+          console.warn("Warning from server:", data.warning)
+          // Optioneel: toon een waarschuwing aan de gebruiker
+          // setError(data.warning)
+        }
+
+        // Ga naar de bedankt-pagina, zelfs als er een waarschuwing is
         router.push("/assessment/bedankt")
       } else {
         console.error("Failed to submit assessment:", data.error)
@@ -207,13 +221,45 @@ export default function AssessmentPage() {
     } catch (error) {
       console.error("Error submitting assessment:", error)
 
+      // Controleer op specifieke fouten
+      if (error instanceof Error) {
+        if (error.name === "AbortError") {
+          setError(
+            "Het versturen van de assessment duurde te lang. We hebben je antwoorden opgeslagen en zullen contact met je opnemen.",
+          )
+
+          // Ga toch naar de bedankt-pagina na een timeout
+          setTimeout(() => {
+            router.push("/assessment/bedankt")
+          }, 3000)
+          return
+        }
+      }
+
       // In preview-omgeving, ga toch door naar de bedankt-pagina
       if (isPreview) {
         router.push("/assessment/bedankt")
         return
       }
 
-      setError("Er was een fout bij het versturen van je assessment. Probeer het opnieuw.")
+      // Probeer de foutmelding uit de response te halen
+      let errorMessage = "Er was een fout bij het versturen van je assessment. Probeer het opnieuw."
+
+      if (error instanceof Error) {
+        try {
+          // Als het een fetch error is, probeer de response te parsen
+          const errorText = error.message
+          if (errorText.includes("Failed to fetch")) {
+            errorMessage = "Netwerkfout - controleer je internetverbinding en probeer het opnieuw."
+          } else {
+            errorMessage = errorText
+          }
+        } catch (parseError) {
+          console.error("Error parsing error message:", parseError)
+        }
+      }
+
+      setError(errorMessage)
     } finally {
       setIsSubmitting(false)
     }
