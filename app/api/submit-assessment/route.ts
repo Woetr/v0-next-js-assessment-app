@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
-import { sendAssessmentResults } from "@/lib/email"
 import { mockSubmitAssessment } from "./mock"
+import { questions } from "@/data/questions"
 
 export async function POST(request: Request) {
   console.log("Assessment submission received")
@@ -45,58 +45,118 @@ export async function POST(request: Request) {
       })
     }
 
+    // Format raw answers for email - limit to prevent oversized emails
+    const formattedAnswers = Object.entries(submission.answers)
+      .map(([questionId, optionId]) => {
+        const question = questions.find((q) => q.id === Number.parseInt(questionId))
+        const option = question?.options.find((o) => o.id === optionId)
+
+        return question && option
+          ? `Vraag ${questionId}: ${question.text}\nAntwoord: ${option.text}\n`
+          : `Vraag ${questionId}: Onbekend antwoord (${optionId})\n`
+      })
+      .join("\n")
+
+    // Prepare email content - keep it concise
+    const emailSubject = `Assessment Resultaten: ${submission.name}`
+    const emailText = `
+Assessment Resultaten voor ${submission.name} (${submission.email})
+Ingediend op: ${new Date(submission.timestamp).toLocaleString("nl-NL")}
+
+RUWE ANTWOORDEN:
+${formattedAnswers}
+
+TIJDSINFORMATIE:
+${
+  submission.timeTaken
+    ? Object.entries(submission.timeTaken)
+        .map(([qId, time]) => `Vraag ${qId}: ${time} seconden`)
+        .join("\n")
+    : "Geen tijdsinformatie beschikbaar"
+}
+
+DEVICE FINGERPRINT:
+${submission.deviceFingerprint ? submission.deviceFingerprint.substring(0, 100) : "Niet beschikbaar"}
+    `
+
+    // Create a simplified HTML version
+    const emailHtml = `
+      <h2>Assessment Resultaten voor ${submission.name}</h2>
+      <p><strong>Email:</strong> ${submission.email}</p>
+      <p><strong>Ingediend op:</strong> ${new Date(submission.timestamp).toLocaleString("nl-NL")}</p>
+      
+      <h3>Antwoorden:</h3>
+      <div style="font-family: monospace; white-space: pre-line; background: #f5f5f5; padding: 15px; border-radius: 5px;">
+${formattedAnswers}
+      </div>
+      
+      <p><strong>Device Fingerprint:</strong> ${
+        submission.deviceFingerprint ? submission.deviceFingerprint.substring(0, 100) : "Niet beschikbaar"
+      }</p>
+    `
+
     console.log("Attempting to send email...")
-    // Probeer e-mail te versturen met timeout
-    const emailPromise = sendAssessmentResults(submission)
 
-    // Add a timeout to prevent hanging
-    const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error("Email sending timed out after 30 seconds")), 30000)
-    })
+    // Probeer e-mail te versturen met directe nodemailer implementatie
+    try {
+      const nodemailer = await import("nodemailer")
 
-    // Race the email sending against the timeout
-    const emailResult = await Promise.race([emailPromise, timeoutPromise]).catch((error) => {
-      console.error("Email sending failed with timeout or error:", error)
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
-        timedOut: true,
+      // Check if email configuration is available
+      if (!process.env.EMAIL_SERVER_HOST || !process.env.EMAIL_SERVER_USER || !process.env.EMAIL_SERVER_PASSWORD) {
+        console.error("Missing email configuration")
+
+        // Stuur toch een succesvolle response om de gebruiker niet te blokkeren
+        return NextResponse.json({
+          success: true,
+          emailSent: false,
+          warning: "Assessment is ontvangen, maar er was een probleem met de e-mailconfiguratie.",
+        })
       }
-    })
 
-    // Log het resultaat voor debugging
-    console.log("Email sending result:", emailResult)
+      // Create transporter
+      const transporter = nodemailer.createTransport({
+        host: process.env.EMAIL_SERVER_HOST,
+        port: Number.parseInt(process.env.EMAIL_SERVER_PORT || "587"),
+        secure: process.env.EMAIL_SERVER_PORT === "465",
+        auth: {
+          user: process.env.EMAIL_SERVER_USER,
+          pass: process.env.EMAIL_SERVER_PASSWORD,
+        },
+        tls: {
+          rejectUnauthorized: false,
+        },
+      })
 
-    // In een echte applicatie zou je de resultaten ook in een database kunnen opslaan
-    console.log("Assessment submitted:", {
-      name: submission.name,
-      email: submission.email,
-      timestamp: submission.timestamp,
-      answersCount: Object.keys(submission.answers).length,
-      emailSuccess: emailResult.success,
-    })
+      // Send email
+      const recipientEmail = process.env.RECIPIENT_EMAIL || "wg.eijkelenkamp@gmail.com"
+      const info = await transporter.sendMail({
+        from: process.env.EMAIL_FROM || process.env.EMAIL_SERVER_USER,
+        to: recipientEmail,
+        subject: emailSubject,
+        text: emailText,
+        html: emailHtml,
+      })
 
-    // Als e-mail verzenden mislukt, log de fout maar ga toch door
-    if (!emailResult.success) {
-      console.error("Email sending failed:", emailResult.error)
+      console.log("Email sent successfully:", info.messageId)
+
+      // Stuur een succesvolle response
+      return NextResponse.json({
+        success: true,
+        emailSent: true,
+        message: "Assessment succesvol verzonden",
+        messageId: info.messageId,
+      })
+    } catch (emailError) {
+      console.error("Email sending failed:", emailError)
 
       // Stuur toch een succesvolle response om de gebruiker niet te blokkeren
       return NextResponse.json({
         success: true,
         emailSent: false,
-        warning:
-          "Assessment is ontvangen, maar er was een probleem met het verzenden van de e-mail. Het team is op de hoogte gebracht.",
-        details: emailResult.error || "Onbekende fout",
+        warning: "Assessment is ontvangen, maar er was een probleem met het verzenden van de e-mail.",
+        details: emailError instanceof Error ? emailError.message : String(emailError),
       })
     }
-
-    // Stuur een succesvolle response
-    return NextResponse.json({
-      success: true,
-      emailSent: true,
-      message: "Assessment succesvol verzonden",
-      messageId: emailResult.messageId,
-    })
   } catch (error) {
     console.error("Error processing assessment submission:", error)
     return NextResponse.json(
