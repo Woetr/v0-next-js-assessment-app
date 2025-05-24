@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { mockSubmitAssessment } from "./mock"
+import { sendEmailWithResend } from "@/lib/resend-email"
 import { questions } from "@/data/questions"
 
 export async function POST(request: Request) {
@@ -15,7 +15,10 @@ export async function POST(request: Request) {
       answersCount: Object.keys(answers || {}).length,
       hasTimeTaken: !!timeTaken,
       hasDeviceFingerprint: !!deviceFingerprint,
-      answersKeys: Object.keys(answers || {}),
+      environment: {
+        NODE_ENV: process.env.NODE_ENV,
+        VERCEL_ENV: process.env.VERCEL_ENV,
+      },
     })
 
     if (!name || !email || !answers) {
@@ -33,36 +36,15 @@ export async function POST(request: Request) {
       deviceFingerprint,
     }
 
-    // Log environment info
-    console.log("Environment check:", {
+    console.log("Processing submission for environment:", {
       NODE_ENV: process.env.NODE_ENV,
       VERCEL_ENV: process.env.VERCEL_ENV,
-      hasEmailHost: !!process.env.EMAIL_SERVER_HOST,
-      hasEmailUser: !!process.env.EMAIL_SERVER_USER,
-      hasEmailPass: !!process.env.EMAIL_SERVER_PASSWORD,
-      hasRecipientEmail: !!process.env.RECIPIENT_EMAIL,
+      hasResendApiKey: !!process.env.RESEND_API_KEY,
     })
 
-    // Check if we're in a preview environment
-    const isPreview = process.env.VERCEL_ENV === "preview" || process.env.NODE_ENV === "development"
-
-    if (isPreview) {
-      console.log("Preview environment detected, using mock submission")
-      await mockSubmitAssessment(submission)
-
-      return NextResponse.json({
-        success: true,
-        emailSent: true,
-        message: "Assessment succesvol verzonden (preview mode)",
-      })
-    }
-
-    console.log("Production environment detected, attempting real email send")
-
-    // Format raw answers for email - limit to prevent oversized emails
+    // Format raw answers for email
     console.log("Formatting answers...")
     const formattedAnswers = Object.entries(submission.answers)
-      .slice(0, 50) // Limit to first 50 answers to prevent oversized emails
       .map(([questionId, optionId]) => {
         const question = questions.find((q) => q.id === Number.parseInt(questionId))
         const option = question?.options.find((o) => o.id === optionId)
@@ -75,11 +57,12 @@ export async function POST(request: Request) {
 
     console.log("Formatted answers length:", formattedAnswers.length)
 
-    // Prepare email content - keep it concise
+    // Prepare email content
     const emailSubject = `Assessment Resultaten: ${submission.name}`
     const emailText = `
 Assessment Resultaten voor ${submission.name} (${submission.email})
 Ingediend op: ${new Date(submission.timestamp).toLocaleString("nl-NL")}
+Omgeving: ${process.env.VERCEL_ENV || process.env.NODE_ENV || "unknown"}
 
 RUWE ANTWOORDEN:
 ${formattedAnswers}
@@ -88,7 +71,6 @@ TIJDSINFORMATIE:
 ${
   submission.timeTaken
     ? Object.entries(submission.timeTaken)
-        .slice(0, 20) // Limit time data
         .map(([qId, time]) => `Vraag ${qId}: ${time} seconden`)
         .join("\n")
     : "Geen tijdsinformatie beschikbaar"
@@ -98,128 +80,82 @@ DEVICE FINGERPRINT:
 ${submission.deviceFingerprint ? submission.deviceFingerprint.substring(0, 100) : "Niet beschikbaar"}
     `
 
-    console.log("Email content prepared, length:", emailText.length)
-
-    // Create a simplified HTML version
+    // Create HTML version
     const emailHtml = `
       <h2>Assessment Resultaten voor ${submission.name}</h2>
       <p><strong>Email:</strong> ${submission.email}</p>
       <p><strong>Ingediend op:</strong> ${new Date(submission.timestamp).toLocaleString("nl-NL")}</p>
+      <p><strong>Omgeving:</strong> ${process.env.VERCEL_ENV || process.env.NODE_ENV || "unknown"}</p>
       
       <h3>Antwoorden:</h3>
-      <div style="font-family: monospace; white-space: pre-line; background: #f5f5f5; padding: 15px; border-radius: 5px;">
+      <div style="font-family: monospace; white-space: pre-line; background: #f5f5f5; padding: 15px; border-radius: 5px; max-height: 400px; overflow-y: auto;">
 ${formattedAnswers}
       </div>
+      
+      ${
+        submission.timeTaken
+          ? `
+      <h3>Tijdsinformatie:</h3>
+      <ul>
+        ${Object.entries(submission.timeTaken)
+          .slice(0, 20)
+          .map(([qId, time]) => `<li>Vraag ${qId}: ${time} seconden</li>`)
+          .join("")}
+      </ul>
+      `
+          : ""
+      }
       
       <p><strong>Device Fingerprint:</strong> ${
         submission.deviceFingerprint ? submission.deviceFingerprint.substring(0, 100) : "Niet beschikbaar"
       }</p>
+      
+      <hr style="margin: 20px 0;">
+      <p style="font-size: 12px; color: #666;">
+        Verzonden via Resend API • BouwerPower Assessment Tool
+      </p>
     `
 
-    console.log("HTML content prepared, length:", emailHtml.length)
+    console.log("Email content prepared, attempting to send via Resend...")
 
-    console.log("Attempting to send email...")
+    // Send email via Resend (works in all environments)
+    const recipientEmail = process.env.RECIPIENT_EMAIL || "wg.eijkelenkamp@gmail.com"
+    const emailResult = await sendEmailWithResend(recipientEmail, emailSubject, emailText, emailHtml)
 
-    // Probeer e-mail te versturen met directe nodemailer implementatie
-    try {
-      console.log("Importing nodemailer...")
-      const nodemailer = await import("nodemailer")
-      console.log("Nodemailer imported successfully")
+    // Log het resultaat voor debugging
+    console.log("Email sending result:", emailResult)
 
-      // Check if email configuration is available
-      if (!process.env.EMAIL_SERVER_HOST || !process.env.EMAIL_SERVER_USER || !process.env.EMAIL_SERVER_PASSWORD) {
-        console.error("Missing email configuration")
+    // Log assessment submission
+    console.log("Assessment submitted:", {
+      name: submission.name,
+      email: submission.email,
+      timestamp: submission.timestamp,
+      answersCount: Object.keys(submission.answers).length,
+      emailSuccess: emailResult.success,
+      environment: process.env.VERCEL_ENV || process.env.NODE_ENV,
+    })
 
-        // Stuur toch een succesvolle response om de gebruiker niet te blokkeren
-        return NextResponse.json({
-          success: true,
-          emailSent: false,
-          warning: "Assessment is ontvangen, maar er was een probleem met de e-mailconfiguratie.",
-        })
-      }
+    if (!emailResult.success) {
+      console.error("Email sending failed:", emailResult.error)
 
-      console.log("Creating transporter...")
-      // Create transporter
-      const transporter = nodemailer.createTransport({
-        host: process.env.EMAIL_SERVER_HOST,
-        port: Number.parseInt(process.env.EMAIL_SERVER_PORT || "587"),
-        secure: process.env.EMAIL_SERVER_PORT === "465",
-        auth: {
-          user: process.env.EMAIL_SERVER_USER,
-          pass: process.env.EMAIL_SERVER_PASSWORD,
-        },
-        tls: {
-          rejectUnauthorized: false,
-        },
-        // Add timeout settings
-        connectionTimeout: 30000,
-        greetingTimeout: 15000,
-        socketTimeout: 30000,
-      })
-
-      console.log("Transporter created, verifying connection...")
-
-      // Verify connection first
-      await transporter.verify()
-      console.log("SMTP connection verified successfully")
-
-      // Send email
-      const recipientEmail = process.env.RECIPIENT_EMAIL || "wg.eijkelenkamp@gmail.com"
-      console.log("Sending email to:", recipientEmail)
-
-      const info = await transporter.sendMail({
-        from: process.env.EMAIL_FROM || process.env.EMAIL_SERVER_USER,
-        to: recipientEmail,
-        subject: emailSubject,
-        text: emailText,
-        html: emailHtml,
-      })
-
-      console.log("Email sent successfully!")
-      console.log("Message ID:", info.messageId)
-      console.log("Accepted:", info.accepted)
-      console.log("Rejected:", info.rejected)
-
-      // Log assessment submission
-      console.log("Assessment submitted successfully:", {
-        name: submission.name,
-        email: submission.email,
-        timestamp: submission.timestamp,
-        answersCount: Object.keys(submission.answers).length,
-        emailSuccess: true,
-      })
-
-      // Stuur een succesvolle response
-      return NextResponse.json({
-        success: true,
-        emailSent: true,
-        message: "Assessment succesvol verzonden",
-        messageId: info.messageId,
-      })
-    } catch (emailError) {
-      console.error("=== EMAIL SENDING FAILED ===")
-      console.error("Error type:", emailError?.constructor?.name)
-      console.error("Error message:", emailError instanceof Error ? emailError.message : String(emailError))
-      console.error("Error stack:", emailError instanceof Error ? emailError.stack : "No stack trace")
-
-      // Log assessment submission with email failure
-      console.log("Assessment submitted with email failure:", {
-        name: submission.name,
-        email: submission.email,
-        timestamp: submission.timestamp,
-        answersCount: Object.keys(submission.answers).length,
-        emailSuccess: false,
-        emailError: emailError instanceof Error ? emailError.message : String(emailError),
-      })
-
-      // Stuur toch een succesvolle response om de gebruiker niet te blokkeren
+      // Stuur een response met waarschuwing maar markeer als succesvol
       return NextResponse.json({
         success: true,
         emailSent: false,
         warning: "Assessment is ontvangen, maar er was een probleem met het verzenden van de e-mail.",
-        details: emailError instanceof Error ? emailError.message : String(emailError),
+        details: emailResult.error || "Onbekende fout",
+        service: "Resend",
       })
     }
+
+    // Stuur een succesvolle response
+    return NextResponse.json({
+      success: true,
+      emailSent: true,
+      message: "Assessment succesvol verzonden via Resend",
+      messageId: emailResult.messageId,
+      service: "Resend",
+    })
   } catch (error) {
     console.error("=== GENERAL ERROR IN ASSESSMENT SUBMISSION ===")
     console.error("Error type:", error?.constructor?.name)

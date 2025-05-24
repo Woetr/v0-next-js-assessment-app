@@ -28,17 +28,6 @@ export default function AssessmentPage() {
   const [hasStarted, setHasStarted] = useState(false)
   const [deviceFingerprint, setDeviceFingerprint] = useState<string>("")
   const [error, setError] = useState<string | null>(null)
-  const [isPreview, setIsPreview] = useState(false)
-
-  // Detecteer of we in een preview-omgeving zijn
-  useEffect(() => {
-    // Check of we in een preview-omgeving zijn (Vercel preview of lokale ontwikkeling)
-    const isPreviewEnv =
-      window.location.hostname === "localhost" ||
-      window.location.hostname.includes("vercel.app") ||
-      window.location.hostname.includes("preview")
-    setIsPreview(isPreviewEnv)
-  }, [])
 
   // Genereer device fingerprint voor detectie van meerdere pogingen
   useEffect(() => {
@@ -165,32 +154,12 @@ export default function AssessmentPage() {
       answersCount: Object.keys(answers).length,
       timeTakenCount: Object.keys(timeTaken).length,
       deviceFingerprintLength: deviceFingerprint.length,
-      isPreview,
     })
 
     setIsSubmitting(true)
     setError(null)
 
     try {
-      // In preview-omgeving, toon een waarschuwing maar ga door
-      if (isPreview) {
-        console.log("Preview environment detected. Skipping actual API call.")
-        console.log("Assessment data:", {
-          name,
-          email,
-          answers,
-          timeTaken,
-          deviceFingerprint,
-        })
-
-        // Wacht even om de gebruikerservaring te simuleren
-        await new Promise((resolve) => setTimeout(resolve, 1000))
-
-        // Ga direct naar de bedankt-pagina
-        router.push("/assessment/bedankt")
-        return
-      }
-
       console.log("Making API call to submit assessment...")
 
       // Voeg een timeout toe aan de fetch
@@ -230,12 +199,10 @@ export default function AssessmentPage() {
         // Als er een waarschuwing is, toon deze maar ga toch door
         if (data.warning) {
           console.warn("Warning from server:", data.warning)
-          // Optioneel: toon een waarschuwing aan de gebruiker
-          // setError(data.warning)
         }
 
         console.log("Assessment submission successful, redirecting to thank you page")
-        // Ga naar de bedankt-pagina, zelfs als er een waarschuwing is
+        // Ga naar de bedankt-pagina
         router.push("/assessment/bedankt")
       } else {
         console.error("Failed to submit assessment:", data.error)
@@ -258,12 +225,6 @@ export default function AssessmentPage() {
           }, 3000)
           return
         }
-      }
-
-      // In preview-omgeving, ga toch door naar de bedankt-pagina
-      if (isPreview) {
-        router.push("/assessment/bedankt")
-        return
       }
 
       // Probeer de foutmelding uit de response te halen
@@ -307,13 +268,6 @@ export default function AssessmentPage() {
     return (
       <div className="container mx-auto px-4 py-12">
         <div className="max-w-md mx-auto">
-          {isPreview && (
-            <Alert className="mb-4 bg-yellow-50 text-yellow-800 border-yellow-200">
-              <AlertDescription>
-                Preview-modus gedetecteerd. E-mails worden niet daadwerkelijk verzonden in deze omgeving.
-              </AlertDescription>
-            </Alert>
-          )}
           <Card>
             <CardHeader>
               <CardTitle>Voordat We Beginnen</CardTitle>
@@ -356,13 +310,6 @@ export default function AssessmentPage() {
     return (
       <div className="container mx-auto px-4 py-12">
         <div className="max-w-2xl mx-auto">
-          {isPreview && (
-            <Alert className="mb-4 bg-yellow-50 text-yellow-800 border-yellow-200">
-              <AlertDescription>
-                Preview-modus gedetecteerd. E-mails worden niet daadwerkelijk verzonden in deze omgeving.
-              </AlertDescription>
-            </Alert>
-          )}
           <Card>
             <CardHeader>
               <CardTitle>Belangrijke Instructies</CardTitle>
@@ -423,14 +370,6 @@ export default function AssessmentPage() {
   return (
     <div className="container mx-auto px-4 py-12">
       <div className="max-w-2xl mx-auto">
-        {isPreview && (
-          <Alert className="mb-4 bg-yellow-50 text-yellow-800 border-yellow-200">
-            <AlertDescription>
-              Preview-modus gedetecteerd. E-mails worden niet daadwerkelijk verzonden in deze omgeving.
-            </AlertDescription>
-          </Alert>
-        )}
-
         {error && (
           <Alert className="mb-4 bg-red-50 text-red-800 border-red-200">
             <AlertDescription>{error}</AlertDescription>

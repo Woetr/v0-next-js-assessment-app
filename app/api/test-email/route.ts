@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { sendEmailWithResend } from "@/lib/resend-email"
 
 export async function GET(request: Request) {
   try {
@@ -11,103 +12,41 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Niet geautoriseerd" }, { status: 401 })
     }
 
-    // Maak een test submission
-    const testSubmission = {
-      name: "Test Gebruiker",
-      email: "test@example.com",
-      timestamp: new Date().toISOString(),
-      answers: {
-        1: "1a",
-        2: "2b",
-        3: "3c",
-      },
-      timeTaken: {
-        1: 15,
-        2: 20,
-        3: 10,
-      },
-      deviceFingerprint: "test-fingerprint",
-    }
-
     // Log alle omgevingsvariabelen (zonder gevoelige informatie)
     console.log("Environment variables check:", {
       NODE_ENV: process.env.NODE_ENV,
       VERCEL_ENV: process.env.VERCEL_ENV,
-      hasEmailHost: !!process.env.EMAIL_SERVER_HOST,
-      hasEmailUser: !!process.env.EMAIL_SERVER_USER,
-      hasEmailPass: !!process.env.EMAIL_SERVER_PASSWORD,
+      hasResendApiKey: !!process.env.RESEND_API_KEY,
       hasEmailFrom: !!process.env.EMAIL_FROM,
       hasRecipientEmail: !!process.env.RECIPIENT_EMAIL,
-      emailHost: process.env.EMAIL_SERVER_HOST,
-      emailPort: process.env.EMAIL_SERVER_PORT,
+      emailFrom: process.env.EMAIL_FROM,
     })
 
-    // Probeer e-mail te versturen met directe nodemailer implementatie
-    try {
-      const nodemailer = await import("nodemailer")
+    const recipientEmail = process.env.RECIPIENT_EMAIL || "wg.eijkelenkamp@gmail.com"
 
-      // Check if email configuration is available
-      if (!process.env.EMAIL_SERVER_HOST || !process.env.EMAIL_SERVER_USER || !process.env.EMAIL_SERVER_PASSWORD) {
-        return NextResponse.json({
-          success: false,
-          error: "Email configuration missing",
-          missingVars: {
-            host: !process.env.EMAIL_SERVER_HOST,
-            user: !process.env.EMAIL_SERVER_USER,
-            pass: !process.env.EMAIL_SERVER_PASSWORD,
-          },
-        })
-      }
+    // Stuur een test e-mail via Resend
+    const result = await sendEmailWithResend(
+      recipientEmail,
+      "Test Email van BouwerPower Assessment (via Resend)",
+      "Dit is een test e-mail om te controleren of de Resend e-mailconfiguratie correct werkt.",
+      "<h1>Test Email via Resend</h1><p>Dit is een test e-mail om te controleren of de Resend e-mailconfiguratie correct werkt.</p><p><strong>Verzonden via:</strong> Resend API</p>",
+    )
 
-      // Create transporter
-      const transporter = nodemailer.createTransport({
-        host: process.env.EMAIL_SERVER_HOST,
-        port: Number.parseInt(process.env.EMAIL_SERVER_PORT || "587"),
-        secure: process.env.EMAIL_SERVER_PORT === "465",
-        auth: {
-          user: process.env.EMAIL_SERVER_USER,
-          pass: process.env.EMAIL_SERVER_PASSWORD,
-        },
-        tls: {
-          rejectUnauthorized: false,
-        },
-      })
+    console.log("Test email result:", result)
 
-      // Send test email
-      const recipientEmail = process.env.RECIPIENT_EMAIL || "wg.eijkelenkamp@gmail.com"
-      const info = await transporter.sendMail({
-        from: process.env.EMAIL_FROM || process.env.EMAIL_SERVER_USER,
-        to: recipientEmail,
-        subject: "Test Email van BouwerPower Assessment",
-        text: "Dit is een test e-mail om te controleren of de e-mailconfiguratie correct werkt.",
-        html: "<h1>Test Email</h1><p>Dit is een test e-mail om te controleren of de e-mailconfiguratie correct werkt.</p>",
-      })
-
-      console.log("Email sent successfully:", info)
-
-      return NextResponse.json({
-        success: true,
-        message: "Test e-mail succesvol verzonden",
-        details: {
-          messageId: info.messageId,
-          accepted: info.accepted,
-          rejected: info.rejected,
-        },
-      })
-    } catch (emailError) {
-      console.error("Direct email sending failed:", emailError)
-
-      return NextResponse.json({
-        success: false,
-        error: "Failed to send email",
-        details: emailError instanceof Error ? emailError.message : String(emailError),
-      })
-    }
+    return NextResponse.json({
+      success: result.success,
+      message: result.success
+        ? "Test e-mail succesvol verzonden via Resend"
+        : "Fout bij het verzenden van de test e-mail",
+      details: result,
+      service: "Resend",
+    })
   } catch (error) {
-    console.error("Error in test email endpoint:", error)
+    console.error("Error sending test email:", error)
     return NextResponse.json(
       {
-        error: "Fout bij het testen van de e-mail",
+        error: "Fout bij het verzenden van de test e-mail",
         details: error instanceof Error ? error.message : String(error),
       },
       { status: 500 },
