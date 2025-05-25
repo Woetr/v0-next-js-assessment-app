@@ -25,7 +25,7 @@ export async function sendEmailWithResend(
 
     // Prepare the email data
     const emailData = {
-      from: process.env.EMAIL_FROM || "assessment@bouwerpower.nl",
+      from: "BouwerPower Assessment <onboarding@resend.dev>", // Gebruik Resend's gratis domein
       to: [to],
       subject,
       text,

@@ -17,9 +17,8 @@ export async function GET(request: Request) {
       NODE_ENV: process.env.NODE_ENV,
       VERCEL_ENV: process.env.VERCEL_ENV,
       hasResendApiKey: !!process.env.RESEND_API_KEY,
-      hasEmailFrom: !!process.env.EMAIL_FROM,
       hasRecipientEmail: !!process.env.RECIPIENT_EMAIL,
-      emailFrom: process.env.EMAIL_FROM,
+      usingResendDomain: "onboarding@resend.dev", // Toon dat we Resend's domein gebruiken
     })
 
     const recipientEmail = process.env.RECIPIENT_EMAIL || "wg.eijkelenkamp@gmail.com"
