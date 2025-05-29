@@ -10,7 +10,7 @@ type EmailConfig = {
   }
 }
 
-type EmailResult = {
+export type EmailResult = {
   success: boolean
   messageId?: string
   error?: string
@@ -18,7 +18,17 @@ type EmailResult = {
 
 let cachedTransporter: Transporter | null = null
 
-export async function sendSimpleEmail(to: string, subject: string, text: string, html?: string): Promise<EmailResult> {
+export async function sendSimpleEmail(
+  to: string,
+  subject: string,
+  text: string,
+  html?: string,
+  attachments?: Array<{
+    filename: string
+    content: Buffer
+    contentType: string
+  }>,
+): Promise<EmailResult> {
   console.log(`Attempting to send email to ${to} with subject "${subject}"`)
 
   try {
@@ -52,6 +62,7 @@ export async function sendSimpleEmail(to: string, subject: string, text: string,
       port,
       secure: config.secure,
       user: user.substring(0, 3) + "***", // Log partial user for debugging
+      attachmentCount: attachments?.length || 0,
     })
 
     // Create or reuse transporter
@@ -67,15 +78,28 @@ export async function sendSimpleEmail(to: string, subject: string, text: string,
       cachedTransporter = transporter
     }
 
-    // Send email with minimal options
-    console.log("Sending email...")
-    const info = await transporter.sendMail({
+    // Prepare email options
+    const mailOptions: any = {
       from: process.env.EMAIL_FROM || user,
       to,
       subject,
       text,
       html: html || text,
-    })
+    }
+
+    // Add attachments if provided
+    if (attachments && attachments.length > 0) {
+      mailOptions.attachments = attachments.map((attachment) => ({
+        filename: attachment.filename,
+        content: attachment.content,
+        contentType: attachment.contentType,
+      }))
+      console.log(`Adding ${attachments.length} attachment(s) to email`)
+    }
+
+    // Send email with minimal options
+    console.log("Sending email...")
+    const info = await transporter.sendMail(mailOptions)
 
     console.log("Email sent successfully:", info.messageId)
     return {

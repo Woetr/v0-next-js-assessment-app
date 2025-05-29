@@ -1,243 +1,248 @@
-import { NextResponse } from "next/server"
+import { type NextRequest, NextResponse } from "next/server"
+import { sendEmailWithResend } from "@/lib/resend-email"
 import { generateAssessmentPDF } from "@/lib/pdf-generator"
-import { questions } from "@/data/questions"
+import type { AssessmentData } from "@/types"
 
-export async function POST(request: Request) {
-  console.log("=== ASSESSMENT SUBMISSION START ===")
-  console.log("Timestamp:", new Date().toISOString())
+export async function POST(request: NextRequest) {
+  console.log("=== API SUBMISSION START ===")
 
   try {
-    const { name, email, answers, timeTaken, deviceFingerprint } = await request.json()
+    // Parse the request body
+    const body = await request.json()
+    console.log("Request body received:", {
+      name: body.name,
+      email: body.email,
+      answersCount: Object.keys(body.answers || {}).length,
+      timeTakenCount: Object.keys(body.timeTaken || {}).length,
+      hasDeviceFingerprint: !!body.deviceFingerprint,
+    })
 
-    console.log("Submission data received:", {
-      name,
-      email,
-      answersCount: Object.keys(answers || {}).length,
-      hasTimeTaken: !!timeTaken,
-      hasDeviceFingerprint: !!deviceFingerprint,
+    // Validate required fields
+    if (!body.name || !body.email || !body.answers) {
+      console.error("Missing required fields:", { name: !!body.name, email: !!body.email, answers: !!body.answers })
+      return NextResponse.json({ error: "Naam, email en antwoorden zijn verplicht" }, { status: 400 })
+    }
+
+    // Create assessment data object
+    const assessmentData: AssessmentData = {
+      name: body.name,
+      email: body.email,
+      timestamp: new Date().toISOString(),
+      answers: body.answers,
+      timeTaken: body.timeTaken || {},
+      deviceFingerprint: body.deviceFingerprint || "",
+    }
+
+    console.log("Assessment data prepared:", {
+      name: assessmentData.name,
+      email: assessmentData.email,
+      timestamp: assessmentData.timestamp,
+      answersCount: Object.keys(assessmentData.answers).length,
+    })
+
+    // Check environment variables for email capability
+    const hasResendKey = !!process.env.RESEND_API_KEY
+    const hasEmailConfig = !!(
+      process.env.EMAIL_SERVER_HOST &&
+      process.env.EMAIL_SERVER_USER &&
+      process.env.EMAIL_SERVER_PASSWORD
+    )
+    const canSendEmail = hasResendKey || hasEmailConfig
+
+    console.log("Email capability check:", {
+      hasResendKey,
+      hasEmailConfig,
+      canSendEmail,
+      environment: process.env.NODE_ENV,
+      vercelEnv: process.env.VERCEL_ENV,
+    })
+
+    // Generate PDF report
+    console.log("Generating PDF report...")
+    let pdfBuffer: Buffer | null = null
+    try {
+      pdfBuffer = await generateAssessmentPDF(assessmentData)
+      console.log("PDF generated successfully, size:", pdfBuffer.length, "bytes")
+    } catch (pdfError) {
+      console.error("PDF generation failed:", pdfError)
+      // Continue without PDF - don't fail the entire submission
+    }
+
+    let emailResult = { success: false, error: "Email not attempted" }
+
+    // Always try to send email if we have the capability
+    if (canSendEmail) {
+      // Prepare simplified email content
+      const emailSubject = `Assessment Resultaten: ${assessmentData.name}`
+
+      const emailText = `
+Beste BouwerPower team,
+
+De assessment resultaten van ${assessmentData.name} zijn beschikbaar!
+
+Kandidaat informatie:
+- Naam: ${assessmentData.name}
+- Email: ${assessmentData.email}
+- Datum: ${new Date(assessmentData.timestamp).toLocaleString("nl-NL")}
+- Aantal beantwoorde vragen: ${Object.keys(assessmentData.answers).length}
+
+${pdfBuffer ? "Het volledige rapport met analyse en aanbevelingen is bijgevoegd als PDF." : "PDF rapport kon niet worden gegenereerd."}
+
+Met vriendelijke groet,
+BouwerPower Assessment Systeem
+      `
+
+      const emailHtml = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <div style="background-color: #2d5c88; color: white; padding: 20px; text-align: center;">
+            <h1 style="margin: 0;">BouwerPower Assessment</h1>
+          </div>
+          
+          <div style="padding: 20px; background-color: #f8f9fa;">
+            <h2 style="color: #2d5c88;">Assessment Resultaten Beschikbaar</h2>
+            
+            <p>Beste BouwerPower team,</p>
+            
+            <p>De assessment resultaten van <strong>${assessmentData.name}</strong> zijn beschikbaar!</p>
+            
+            <div style="background-color: white; padding: 15px; border-radius: 5px; margin: 20px 0;">
+              <h3 style="color: #2d5c88; margin-top: 0;">Kandidaat Informatie</h3>
+              <ul style="list-style: none; padding: 0;">
+                <li><strong>Naam:</strong> ${assessmentData.name}</li>
+                <li><strong>Email:</strong> ${assessmentData.email}</li>
+                <li><strong>Datum:</strong> ${new Date(assessmentData.timestamp).toLocaleString("nl-NL")}</li>
+                <li><strong>Aantal beantwoorde vragen:</strong> ${Object.keys(assessmentData.answers).length}</li>
+              </ul>
+            </div>
+            
+            ${
+              pdfBuffer
+                ? '<p style="background-color: #d4edda; padding: 10px; border-radius: 5px; color: #155724;">📎 Het volledige rapport met analyse en aanbevelingen is bijgevoegd als PDF.</p>'
+                : '<p style="background-color: #f8d7da; padding: 10px; border-radius: 5px; color: #721c24;">⚠️ PDF rapport kon niet worden gegenereerd.</p>'
+            }
+            
+            <p>Met vriendelijke groet,<br>
+            <strong>BouwerPower Assessment Systeem</strong></p>
+          </div>
+          
+          <div style="background-color: #6c757d; color: white; padding: 10px; text-align: center; font-size: 12px;">
+            Gegenereerd op ${new Date().toLocaleString("nl-NL")} | Vertrouwelijk document
+          </div>
+        </div>
+      `
+
+      // Prepare attachments
+      const attachments = []
+      if (pdfBuffer) {
+        attachments.push({
+          filename: `Assessment_${assessmentData.name.replace(/[^a-zA-Z0-9]/g, "_")}_${new Date().toISOString().split("T")[0]}.pdf`,
+          content: pdfBuffer,
+          contentType: "application/pdf",
+        })
+      }
+
+      // Send email
+      console.log("Attempting to send email...")
+      const recipientEmail = process.env.RECIPIENT_EMAIL || "wg.eijkelenkamp@gmail.com"
+
+      // First try with Resend if available
+      if (hasResendKey) {
+        console.log("Attempting to send email via Resend...")
+        emailResult = await sendEmailWithResend(recipientEmail, emailSubject, emailText, emailHtml, attachments)
+        console.log("Resend result:", emailResult)
+      }
+
+      // If Resend fails or is not available, try with simple email as fallback
+      if (!emailResult.success && hasEmailConfig) {
+        console.log("Resend failed or not available, trying fallback email method...")
+        try {
+          const { sendSimpleEmail } = await import("@/lib/simple-email")
+          emailResult = await sendSimpleEmail(recipientEmail, emailSubject, emailText, emailHtml, attachments)
+          console.log("Fallback email result:", emailResult)
+        } catch (fallbackError) {
+          console.error("Fallback email method also failed:", fallbackError)
+          emailResult = {
+            success: false,
+            error: `Fallback failed: ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`,
+          }
+        }
+      }
+
+      console.log("Final email result:", emailResult)
+    } else {
+      console.log("No email configuration available - skipping email sending")
+      emailResult = {
+        success: false,
+        error: "No email configuration available (missing RESEND_API_KEY or email server settings)",
+      }
+    }
+
+    // Return success response with email status
+    const response = {
+      success: true,
+      message: emailResult.success
+        ? "Assessment succesvol verzonden en email verstuurd"
+        : "Assessment succesvol ontvangen",
+      emailSent: emailResult.success,
+      pdfGenerated: !!pdfBuffer,
+      pdfAttached: emailResult.success && !!pdfBuffer,
       environment: {
         NODE_ENV: process.env.NODE_ENV,
         VERCEL_ENV: process.env.VERCEL_ENV,
+        hasResendKey,
+        hasEmailConfig,
+        canSendEmail,
       },
-    })
-
-    if (!name || !email || !answers) {
-      console.error("Missing required fields:", { name: !!name, email: !!email, answers: !!answers })
-      return NextResponse.json({ error: "Verplichte velden ontbreken" }, { status: 400 })
     }
 
-    // Bereid resultaten voor
-    const submission = {
-      name,
-      email,
-      timestamp: new Date().toISOString(),
-      answers,
-      timeTaken,
-      deviceFingerprint,
+    // Add warning if email failed
+    if (!emailResult.success) {
+      response.warning = `Email kon niet worden verzonden: ${emailResult.error}`
     }
 
-    console.log("Generating PDF report...")
-
-    // Genereer PDF rapport
-    let pdfBuffer: Buffer | null = null
-    try {
-      pdfBuffer = await generateAssessmentPDF(submission)
-      console.log("PDF generated successfully, size:", pdfBuffer.length, "bytes")
-    } catch (pdfError) {
-      console.error("Failed to generate PDF:", pdfError)
-      // Continue without PDF if generation fails
-    }
-
-    console.log("Processing submission for environment:", {
-      NODE_ENV: process.env.NODE_ENV,
-      VERCEL_ENV: process.env.VERCEL_ENV,
-      hasResendApiKey: !!process.env.RESEND_API_KEY,
-      hasPDF: !!pdfBuffer,
-    })
-
-    // Format raw answers for email
-    console.log("Formatting answers...")
-    const formattedAnswers = Object.entries(submission.answers)
-      .slice(0, 50) // Limit to prevent email size issues
-      .map(([questionId, optionId]) => {
-        const question = questions.find((q) => q.id === Number.parseInt(questionId))
-        const option = question?.options.find((o) => o.id === optionId)
-
-        return question && option
-          ? `Vraag ${questionId}: ${question.text}\nAntwoord: ${option.text}\n`
-          : `Vraag ${questionId}: Onbekend antwoord (${optionId})\n`
-      })
-      .join("\n")
-
-    console.log("Formatted answers length:", formattedAnswers.length)
-
-    // Prepare email content
-    const emailSubject = `Assessment Resultaten: ${submission.name}`
-    const emailText = `
-Assessment Resultaten voor ${submission.name} (${submission.email})
-Ingediend op: ${new Date(submission.timestamp).toLocaleString("nl-NL")}
-Omgeving: ${process.env.VERCEL_ENV || process.env.NODE_ENV || "unknown"}
-
-${pdfBuffer ? "Een gedetailleerd PDF rapport is bijgevoegd met volledige analyse." : "PDF rapport kon niet worden gegenereerd."}
-
-RUWE ANTWOORDEN (eerste 50):
-${formattedAnswers}
-
-TIJDSINFORMATIE:
-${
-  submission.timeTaken
-    ? Object.entries(submission.timeTaken)
-        .slice(0, 20)
-        .map(([qId, time]) => `Vraag ${qId}: ${time} seconden`)
-        .join("\n")
-    : "Geen tijdsinformatie beschikbaar"
-}
-
-DEVICE FINGERPRINT:
-${submission.deviceFingerprint ? submission.deviceFingerprint.substring(0, 100) : "Niet beschikbaar"}
-    `
-
-    // Create HTML version
-    const emailHtml = `
-      <h2>Assessment Resultaten voor ${submission.name}</h2>
-      <p><strong>Email:</strong> ${submission.email}</p>
-      <p><strong>Ingediend op:</strong> ${new Date(submission.timestamp).toLocaleString("nl-NL")}</p>
-      <p><strong>Omgeving:</strong> ${process.env.VERCEL_ENV || process.env.NODE_ENV || "unknown"}</p>
-      
-      ${
-        pdfBuffer
-          ? '<div style="background: #e8f5e8; padding: 15px; border-radius: 5px; margin: 15px 0;"><strong>📄 PDF Rapport:</strong> Een gedetailleerd rapport met volledige analyse is bijgevoegd.</div>'
-          : '<div style="background: #fff3cd; padding: 15px; border-radius: 5px; margin: 15px 0;"><strong>⚠️ Let op:</strong> PDF rapport kon niet worden gegenereerd.</div>'
-      }
-      
-      <h3>Ruwe Antwoorden (eerste 50):</h3>
-      <div style="font-family: monospace; white-space: pre-line; background: #f5f5f5; padding: 15px; border-radius: 5px; max-height: 300px; overflow-y: auto;">
-${formattedAnswers}
-      </div>
-      
-      ${
-        submission.timeTaken
-          ? `
-      <h3>Tijdsinformatie:</h3>
-      <ul>
-        ${Object.entries(submission.timeTaken)
-          .slice(0, 20)
-          .map(([qId, time]) => `<li>Vraag ${qId}: ${time} seconden</li>`)
-          .join("")}
-      </ul>
-      `
-          : ""
-      }
-      
-      <p><strong>Device Fingerprint:</strong> ${
-        submission.deviceFingerprint ? submission.deviceFingerprint.substring(0, 100) : "Niet beschikbaar"
-      }</p>
-      
-      <hr style="margin: 20px 0;">
-      <p style="font-size: 12px; color: #666;">
-        Verzonden via Resend API • BouwerPower Assessment Tool
-      </p>
-    `
-
-    console.log("Email content prepared, attempting to send via Resend...")
-
-    // Send email via Resend with PDF attachment
-    const recipientEmail = process.env.RECIPIENT_EMAIL || "wg.eijkelenkamp@gmail.com"
-
-    // Prepare email data with attachment
-    const emailData: any = {
-      from: "BouwerPower Assessment <onboarding@resend.dev>",
-      to: [recipientEmail],
-      subject: emailSubject,
-      text: emailText,
-      html: emailHtml,
-    }
-
-    // Add PDF attachment if available
-    if (pdfBuffer) {
-      emailData.attachments = [
-        {
-          filename: `Assessment_${submission.name.replace(/\s+/g, "_")}_${new Date().toISOString().split("T")[0]}.pdf`,
-          content: pdfBuffer.toString("base64"),
-          type: "application/pdf",
-        },
-      ]
-    }
-
-    console.log("Sending email with attachment:", {
-      hasAttachment: !!pdfBuffer,
-      attachmentSize: pdfBuffer?.length || 0,
-    })
-
-    // Send via Resend API directly (since we need attachment support)
-    const apiKey = process.env.RESEND_API_KEY
-    if (!apiKey) {
-      throw new Error("RESEND_API_KEY is missing")
-    }
-
-    const response = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify(emailData),
-    })
-
-    const responseData = await response.json()
-
-    console.log("Resend API response:", {
-      status: response.status,
-      statusText: response.statusText,
-      data: responseData,
-    })
-
-    if (!response.ok) {
-      console.error("Email sending failed:", responseData)
-      return NextResponse.json({
-        success: true,
-        emailSent: false,
-        warning: "Assessment is ontvangen, maar er was een probleem met het verzenden van de e-mail.",
-        details: responseData.message || "Onbekende fout",
-        service: "Resend",
-      })
-    }
-
-    // Log assessment submission
-    console.log("Assessment submitted successfully:", {
-      name: submission.name,
-      email: submission.email,
-      timestamp: submission.timestamp,
-      answersCount: Object.keys(submission.answers).length,
-      emailSuccess: true,
-      hasPDF: !!pdfBuffer,
-      messageId: responseData.id,
-      environment: process.env.VERCEL_ENV || process.env.NODE_ENV,
-    })
-
-    // Stuur een succesvolle response
-    return NextResponse.json({
-      success: true,
-      emailSent: true,
-      message: `Assessment succesvol verzonden via Resend${pdfBuffer ? " met PDF rapport" : ""}`,
-      messageId: responseData.id,
-      service: "Resend",
-      hasPDF: !!pdfBuffer,
-    })
+    console.log("Returning response:", response)
+    return NextResponse.json(response)
   } catch (error) {
-    console.error("=== GENERAL ERROR IN ASSESSMENT SUBMISSION ===")
-    console.error("Error type:", error?.constructor?.name)
-    console.error("Error message:", error instanceof Error ? error.message : String(error))
-    console.error("Error stack:", error instanceof Error ? error.stack : "No stack trace")
+    console.error("Error in submit-assessment API:", error)
+
+    // Provide more specific error information
+    let errorMessage = "Er is een onbekende fout opgetreden"
+
+    if (error instanceof Error) {
+      errorMessage = error.message
+
+      // Check for specific error types
+      if (error.message.includes("JSON")) {
+        errorMessage = "Ongeldige data ontvangen"
+      } else if (error.message.includes("timeout")) {
+        errorMessage = "Verzoek duurde te lang"
+      } else if (error.message.includes("network")) {
+        errorMessage = "Netwerkfout"
+      }
+    }
 
     return NextResponse.json(
       {
-        error: "Fout bij verwerken van assessment",
+        error: errorMessage,
         details: error instanceof Error ? error.message : String(error),
+        success: false,
       },
       { status: 500 },
     )
   } finally {
-    console.log("=== ASSESSMENT SUBMISSION END ===")
+    console.log("=== API SUBMISSION END ===")
   }
+}
+
+// Handle other HTTP methods
+export async function GET() {
+  return NextResponse.json({ error: "Method not allowed" }, { status: 405 })
+}
+
+export async function PUT() {
+  return NextResponse.json({ error: "Method not allowed" }, { status: 405 })
+}
+
+export async function DELETE() {
+  return NextResponse.json({ error: "Method not allowed" }, { status: 405 })
 }

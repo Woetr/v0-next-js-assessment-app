@@ -8,7 +8,7 @@ export default function Home() {
       <div className="max-w-4xl mx-auto">
         <div className="text-center mb-12">
           <h1 className="text-4xl font-bold tracking-tight text-gray-900 sm:text-5xl md:text-6xl">
-            Bouwerpower Recruitment Assessment
+            BouwerPower Recruitment Assessment
           </h1>
           <p className="mt-6 text-xl text-gray-600">
             Toon je vaardigheden en kwaliteiten aan ons recruitmentteam met deze assessment.
@@ -22,10 +22,11 @@ export default function Home() {
           </CardHeader>
           <CardContent>
             <ul className="list-disc pl-5 space-y-2">
-              <li>45 meerkeuzevragen om je vaardigheden en kwaliteiten te evalueren</li>
-              <li>Ongeveer 15-20 minuten om te voltooien</li>
+              <li>65 meerkeuzevragen om je vaardigheden en kwaliteiten te evalueren</li>
+              <li>Ongeveer 20-30 minuten om te voltooien</li>
               <li>Je resultaten worden naar ons recruitmentteam gestuurd voor evaluatie</li>
               <li>Eerlijke antwoorden geven de meest nauwkeurige weergave van je kwaliteiten</li>
+              <li>Bij enkele vragen zou je een rekenmachine nodig kunnen hebben</li>
             </ul>
           </CardContent>
           <CardFooter>
@@ -45,7 +46,7 @@ export default function Home() {
           <div className="bg-white p-6 rounded-lg shadow-md">
             <h3 className="text-lg font-medium text-gray-900">Professionele Omgeving</h3>
             <p className="mt-2 text-gray-600">
-              Bij Bouwerpower werken we in een dynamische en professionele omgeving met uitdagende projecten.
+              Bij BouwerPower werken we in een dynamische en professionele omgeving met uitdagende projecten.
             </p>
           </div>
           <div className="bg-white p-6 rounded-lg shadow-md">

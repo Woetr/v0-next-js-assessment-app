@@ -196,6 +196,13 @@ export default function AssessmentPage() {
       console.log("API response data:", data)
 
       if (response.ok) {
+        // Log email status for debugging
+        console.log("Email status:", {
+          emailSent: data.emailSent,
+          warning: data.warning,
+          environment: data.environment,
+        })
+
         // Als er een waarschuwing is, toon deze maar ga toch door
         if (data.warning) {
           console.warn("Warning from server:", data.warning)
